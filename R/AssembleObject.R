@@ -65,7 +65,7 @@ AssembleAssay <- function(assay, file, slots = NULL, verbose = TRUE) {
   Key(object = obj) <- Key(object = assay.group)
   # Add remaining slots
   for (slot in slots) {
-    if (IsMatrixEmpty(x = GetAssayData(object = obj, slot = slot))) {
+    if (IsMatrixEmpty(x = GetAssayData_compat(object = obj, slot = slot))) {
       if (verbose) {
         message("Adding ", slot, " for ", assay)
       }
@@ -76,7 +76,7 @@ AssembleAssay <- function(assay, file, slots = NULL, verbose = TRUE) {
       } else {
         features
       }
-      obj <- SetAssayData(object = obj, slot = slot, new.data = dat)
+      obj <- SetAssayData_compat(object = obj, slot = slot, new.data = dat)
     }
   }
   # Add meta features

@@ -71,6 +71,18 @@ spatial.version <- '3.1.5.9900'
 # Internal utility functions
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+# SeuratObject 5 renamed the `slot` argument to `layer` in GetAssayData /
+# SetAssayData and made the old name defunct.  These shims try the new name
+# first and fall back to the old name so the package works with both v4 and v5.
+GetAssayData_compat <- function(object, slot) {
+  tryCatch(GetAssayData(object = object, layer = slot),
+           error = function(e) GetAssayData(object = object, slot = slot))
+}
+SetAssayData_compat <- function(object, slot, new.data) {
+  tryCatch(SetAssayData(object = object, layer = slot, new.data = new.data),
+           error = function(e) SetAssayData(object = object, slot = slot, new.data = new.data))
+}
+
 #' Convert a logical to an integer
 #'
 #' Unlike most programming languages, R has three possible \link[base]{logical}

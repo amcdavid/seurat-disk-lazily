@@ -239,7 +239,7 @@ setMethod(
     # Write out expression data
     # TODO: determine if empty matrices should be present
     for (i in c('counts', 'data', 'scale.data')) {
-      dat <- GetAssayData(object = x, slot = i)
+      dat <- GetAssayData_compat(object = x, slot = i)
       if (!IsMatrixEmpty(x = dat)) {
         if (verbose) {
           message("Adding ", i, " for ", name)

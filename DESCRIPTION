@@ -67,5 +67,6 @@ Suggests:
     httr,
     knitr,
     rmarkdown,
-    SeuratData
+    SeuratData,
+    testthat (>= 3.0.0)
 VignetteBuilder: knitr

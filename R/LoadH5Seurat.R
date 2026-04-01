@@ -88,6 +88,7 @@ LoadH5Seurat.character <- function(
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 ) {
   hfile <- h5Seurat$new(filename = file, mode = 'r')
@@ -104,6 +105,7 @@ LoadH5Seurat.character <- function(
     misc = misc,
     tools = tools,
     verbose = verbose,
+    cells = cells,
     ...
   ))
 }
@@ -124,6 +126,7 @@ LoadH5Seurat.H5File <- function(
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 ) {
   return(LoadH5Seurat(
@@ -138,6 +141,7 @@ LoadH5Seurat.H5File <- function(
     misc = misc,
     tools = tools,
     verbose = verbose,
+    cells = cells,
     ...
   ))
 }
@@ -160,6 +164,7 @@ LoadH5Seurat.h5Seurat <- function(
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 ) {
   return(as.Seurat(
@@ -174,6 +179,7 @@ LoadH5Seurat.h5Seurat <- function(
     misc = misc,
     tools = tools,
     verbose = verbose,
+    cells = cells,
     ...
   ))
 }
@@ -202,6 +208,7 @@ as.Seurat.h5Seurat <- function(
   misc = TRUE,
   tools = TRUE,
   verbose = TRUE,
+  cells = NULL,
   ...
 ) {
   index <- x$index()
@@ -210,6 +217,10 @@ as.Seurat.h5Seurat <- function(
     FUN = is.null,
     FUN.VALUE = logical(length = 1L)
   ))
+  # Resolve cell subset once; all_cells and cell_idx are used throughout
+  all.cells     <- Cells(x = x)
+  cell_idx      <- resolve_cells(cells = cells, all_cells = all.cells)
+  selected.cells <- if (is.null(cell_idx)) all.cells else all.cells[cell_idx]
   # Load Assays
   assays <- GetAssays(assays = assays, index = index)
   if (!DefaultAssay(object = index) %in% names(x = assays)) {
@@ -228,20 +239,21 @@ as.Seurat.h5Seurat <- function(
   names(x = assay.objects) <- names(x = assays)
   for (assay in names(x = assays)) {
     assay.objects[[assay]] <- AssembleAssay(
-      assay = assay,
-      file = x,
-      slots = assays[[assay]],
-      verbose = verbose
+      assay    = assay,
+      file     = x,
+      slots    = assays[[assay]],
+      cell_idx = cell_idx,
+      verbose  = verbose
     )
   }
   default.assay <- list(assay.objects[[active.assay]])
   names(x = default.assay) <- active.assay
   object <- new(
-    Class = 'Seurat',
-    assays = default.assay,
+    Class        = 'Seurat',
+    assays       = default.assay,
     active.assay = active.assay,
-    meta.data = data.frame(row.names = Cells(x = x)),
-    version = package_version(x = x$version())
+    meta.data    = data.frame(row.names = selected.cells),
+    version      = package_version(x = x$version())
   )
   for (assay in names(x = assay.objects)) {
     if (assay != active.assay) {
@@ -260,8 +272,9 @@ as.Seurat.h5Seurat <- function(
     }
     reduction <- AssembleDimReduc(
       reduction = reduc,
-      file = x,
-      verbose = verbose
+      file      = x,
+      cell_idx  = cell_idx,
+      verbose   = verbose
     )
     if (isTRUE(x = getOption(x = 'SeuratDisk.dimreducs.allglobal', default = FALSE))) {
       slot(object = reduction, name = 'global') <- TRUE
@@ -274,7 +287,12 @@ as.Seurat.h5Seurat <- function(
     if (verbose) {
       message("Adding graph ", graph)
     }
-    object[[graph]] <- AssembleGraph(graph = graph, file = x, verbose = verbose)
+    object[[graph]] <- AssembleGraph(
+      graph    = graph,
+      file     = x,
+      cell_idx = cell_idx,
+      verbose  = verbose
+    )
   }
   # Load Neighbors
   neighbors <- GetNeighbors(neighbors = neighbors, index = index)
@@ -284,9 +302,10 @@ as.Seurat.h5Seurat <- function(
     }
     object[[neighbor]] <- AssembleNeighbor(
       neighbor = neighbor,
-      file = x,
-      verbose = verbose
-      )
+      file     = x,
+      cell_idx = cell_idx,
+      verbose  = verbose
+    )
   }
   # Load SpatialImages
   if (packageVersion(pkg = 'Seurat') >= numeric_version(x = spatial.version)) {
@@ -296,13 +315,14 @@ as.Seurat.h5Seurat <- function(
         message("Adding image ", image)
       }
       object[[image]] <- AssembleImage(
-        image = image,
-        file = x,
-        verbose = verbose
+        image    = image,
+        file     = x,
+        cell_idx = cell_idx,
+        verbose  = verbose
       )
     }
   }
-  # Load SeuratCommands
+  # Load SeuratCommands  (not cell-indexed; load unchanged)
   if (commands) {
     if (verbose) {
       message("Adding command information")
@@ -312,8 +332,8 @@ as.Seurat.h5Seurat <- function(
     names(x = cmdlogs) <- cmds
     for (cmd in cmds) {
       cmdlogs[[cmd]] <- AssembleSeuratCommand(
-        cmd = cmd,
-        file = x,
+        cmd     = cmd,
+        file    = x,
         verbose = verbose
       )
     }
@@ -324,22 +344,30 @@ as.Seurat.h5Seurat <- function(
     if (verbose) {
       message("Adding cell-level metadata")
     }
-    md <- as.data.frame(x = x[['meta.data']], row.names = Cells(x = x))
+    md <- as.data.frame(x = x[['meta.data']], row.names = all.cells)
+    if (!is.null(cell_idx)) {
+      md <- md[cell_idx, , drop = FALSE]
+    }
     if (ncol(x = md)) {
       object <- AddMetaData(object = object, metadata = md)
     }
   }
   # Set cell identities and object project
-  Idents(object = object) <- Idents(object = x)
+  all.idents <- Idents(object = x)
+  if (is.null(cell_idx)) {
+    Idents(object = object) <- all.idents
+  } else {
+    Idents(object = object) <- all.idents[cell_idx]
+  }
   Project(object = object) <- Project(object = x)
-  # Load misc
+  # Load misc  (not cell-indexed)
   if (misc) {
     if (verbose) {
       message("Adding miscellaneous information")
     }
     slot(object = object, name = 'misc') <- as.list(x = x[['misc']])
   }
-  # Load tools
+  # Load tools  (not cell-indexed)
   if (tools) {
     if (verbose) {
       message("Adding tool-specific results")
@@ -353,15 +381,16 @@ as.Seurat.h5Seurat <- function(
     }
     for (graph in index$no.assay$graphs) {
       object[[graph]] <- AssembleGraph(
-        graph = graph,
-        file = x,
-        verbose = verbose
+        graph    = graph,
+        file     = x,
+        cell_idx = cell_idx,
+        verbose  = verbose
       )
     }
     for (cmd in index$no.assay$commands) {
       object[[cmd]] <- AssembleSeuratCommand(
-        cmd = cmd,
-        file = x,
+        cmd     = cmd,
+        file    = x,
         verbose = verbose
       )
     }

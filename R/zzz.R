@@ -71,6 +71,75 @@ spatial.version <- '3.1.5.9900'
 # Internal utility functions
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+# SeuratObject 5 renamed the `slot` argument to `layer` in GetAssayData /
+# SetAssayData and made the old name defunct.  These shims try the new name
+# first and fall back to the old name so the package works with both v4 and v5.
+GetAssayData_compat <- function(object, slot) {
+  tryCatch(GetAssayData(object = object, layer = slot),
+           error = function(e) GetAssayData(object = object, slot = slot))
+}
+SetAssayData_compat <- function(object, slot, new.data) {
+  tryCatch(SetAssayData(object = object, layer = slot, new.data = new.data),
+           error = function(e) SetAssayData(object = object, slot = slot, new.data = new.data))
+}
+
+#' Resolve a \code{cells} argument to an integer index vector
+#'
+#' Normalises the three accepted input types into a 1-based integer vector
+#' suitable for HDF5 hyperslab reads, or returns \code{NULL} when no
+#' subsetting is requested.
+#'
+#' @param cells \code{NULL}, a logical vector (length == number of cells in
+#'   file), an integer/numeric vector of 1-based indices, or a character
+#'   vector of cell barcodes.
+#' @param all_cells Character vector of every barcode in the file, in file
+#'   order.
+#'
+#' @return An integer vector of 1-based indices, or \code{NULL}.
+#'
+#' @keywords internal
+#'
+resolve_cells <- function(cells, all_cells) {
+  if (is.null(cells)) {
+    return(NULL)
+  }
+  if (is.logical(cells)) {
+    if (length(cells) != length(all_cells)) {
+      stop(
+        "Logical 'cells' must have length equal to the number of cells in ",
+        "the file (", length(all_cells), "), got ", length(cells),
+        call. = FALSE
+      )
+    }
+    return(which(cells))
+  }
+  if (is.numeric(cells)) {
+    idx <- as.integer(cells)
+    bad <- idx < 1L | idx > length(all_cells)
+    if (any(bad)) {
+      stop(
+        "Integer 'cells' indices out of range [1, ", length(all_cells), "]: ",
+        paste(idx[bad][seq_len(min(5L, sum(bad)))], collapse = ", "),
+        call. = FALSE
+      )
+    }
+    return(idx)
+  }
+  if (is.character(cells)) {
+    idx <- match(cells, all_cells)
+    missing <- cells[is.na(idx)]
+    if (length(missing) > 0L) {
+      stop(
+        "The following cells were not found in the file: ",
+        paste(missing[seq_len(min(5L, length(missing)))], collapse = ", "),
+        call. = FALSE
+      )
+    }
+    return(idx)
+  }
+  stop("'cells' must be NULL, logical, integer, or character", call. = FALSE)
+}
+
 #' Convert a logical to an integer
 #'
 #' Unlike most programming languages, R has three possible \link[base]{logical}

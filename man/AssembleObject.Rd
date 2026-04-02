@@ -10,15 +10,15 @@
 \alias{AssembleSeuratCommand}
 \title{Assemble an object from an h5Seurat file}
 \usage{
-AssembleAssay(assay, file, slots = NULL, verbose = TRUE)
+AssembleAssay(assay, file, slots = NULL, cell_idx = NULL, verbose = TRUE)
 
-AssembleDimReduc(reduction, file, verbose = TRUE)
+AssembleDimReduc(reduction, file, cell_idx = NULL, verbose = TRUE)
 
-AssembleGraph(graph, file, verbose = TRUE)
+AssembleGraph(graph, file, cell_idx = NULL, verbose = TRUE)
 
-AssembleImage(image, file, verbose = TRUE)
+AssembleImage(image, file, cell_idx = NULL, verbose = TRUE)
 
-AssembleNeighbor(neighbor, file, verbose = TRUE)
+AssembleNeighbor(neighbor, file, cell_idx = NULL, verbose = TRUE)
 
 AssembleSeuratCommand(cmd, file, verbose = TRUE)
 }

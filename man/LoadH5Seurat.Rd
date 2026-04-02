@@ -23,6 +23,7 @@ LoadH5Seurat(file, ...)
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 )
 
@@ -38,6 +39,7 @@ LoadH5Seurat(file, ...)
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 )
 
@@ -53,6 +55,7 @@ LoadH5Seurat(file, ...)
   misc = is.null(x = assays),
   tools = is.null(x = assays),
   verbose = TRUE,
+  cells = NULL,
   ...
 )
 
@@ -68,6 +71,7 @@ LoadH5Seurat(file, ...)
   misc = TRUE,
   tools = TRUE,
   verbose = TRUE,
+  cells = NULL,
   ...
 )
 }

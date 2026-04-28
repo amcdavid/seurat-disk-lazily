@@ -63,10 +63,16 @@ Collate:
     'SaveH5Seurat.R'
     'SaveLoom.R'
     'h5Seurat_bindings.R'
+    'LoadH5SCE.R'
 Suggests:
+    DelayedArray,
+    HDF5Array,
     httr,
     knitr,
     rmarkdown,
+    S4Vectors,
     SeuratData,
+    SingleCellExperiment,
+    SummarizedExperiment,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr

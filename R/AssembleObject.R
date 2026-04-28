@@ -31,7 +31,7 @@ NULL
 #'
 #' @aliases AssembleAssay
 #'
-AssembleAssay <- function(assay, file, slots = NULL, verbose = TRUE) {
+AssembleAssay <- function(assay, file, slots = NULL, cell_idx = NULL, verbose = TRUE) {
   index <- file$index()
   if (!assay %in% names(x = index)) {
     stop("Cannot find assay ", assay, " in this h5Seurat file", call. = FALSE)
@@ -44,39 +44,40 @@ AssembleAssay <- function(assay, file, slots = NULL, verbose = TRUE) {
   }
   assay.group <- file[['assays']][[assay]]
   features <- FixFeatures(features = assay.group[['features']][])
+  cell_names <- if (is.null(cell_idx)) Cells(x = file) else Cells(x = file)[cell_idx]
   # Add counts if not data, otherwise add data
   if ('counts' %in% slots && !'data' %in% slots) {
     if (verbose) {
       message("Initializing ", assay, " with counts")
     }
-    counts <- as.matrix(x = assay.group[['counts']])
+    counts <- read_assay_matrix(x = assay.group[['counts']], col_idx = cell_idx)
     rownames(x = counts) <- features
-    colnames(x = counts) <- Cells(x = file)
+    colnames(x = counts) <- cell_names
     obj <- CreateAssayObject(counts = counts, min.cells = -1, min.features = -1)
   } else {
     if (verbose) {
       message("Initializing ", assay, " with data")
     }
-    data <- as.matrix(x = assay.group[['data']])
+    data <- read_assay_matrix(x = assay.group[['data']], col_idx = cell_idx)
     rownames(x = data) <- features
-    colnames(x = data) <- Cells(x = file)
+    colnames(x = data) <- cell_names
     obj <- CreateAssayObject(data = data)
   }
   Key(object = obj) <- Key(object = assay.group)
   # Add remaining slots
   for (slot in slots) {
-    if (IsMatrixEmpty(x = GetAssayData(object = obj, slot = slot))) {
+    if (IsMatrixEmpty(x = GetAssayData_compat(object = obj, slot = slot))) {
       if (verbose) {
         message("Adding ", slot, " for ", assay)
       }
-      dat <- as.matrix(x = assay.group[[slot]])
-      colnames(x = dat) <- Cells(x = file)
+      dat <- read_assay_matrix(x = assay.group[[slot]], col_idx = cell_idx)
+      colnames(x = dat) <- cell_names
       rownames(x = dat) <- if (slot == 'scale.data') {
         FixFeatures(features = assay.group[['scaled.features']][])
       } else {
         features
       }
-      obj <- SetAssayData(object = obj, slot = slot, new.data = dat)
+      obj <- SetAssayData_compat(object = obj, slot = slot, new.data = dat)
     }
   }
   # Add meta features
@@ -141,7 +142,7 @@ AssembleAssay <- function(assay, file, slots = NULL, verbose = TRUE) {
 #'
 #' @rdname AssembleObject
 #'
-AssembleDimReduc <- function(reduction, file, verbose = TRUE) {
+AssembleDimReduc <- function(reduction, file, cell_idx = NULL, verbose = TRUE) {
   index <- file$index()
   index.check <- vapply(
     X = setdiff(x = names(x = index), y = c('global', 'no.assay')),
@@ -163,14 +164,23 @@ AssembleDimReduc <- function(reduction, file, verbose = TRUE) {
   assay <- names(x = which(x = index.check))
   reduc.group <- file[['reductions']][[reduction]]
   key <- Key(object = reduc.group)
+  cell_names <- if (is.null(cell_idx)) Cells(x = file) else Cells(x = file)[cell_idx]
   # Pull cell embeddings
   if (index[[assay]]$reductions[[reduction]][['cell.embeddings']]) {
     if (verbose) {
       message("Adding cell embeddings for ", reduction)
     }
-    embeddings <- as.matrix(x = reduc.group[['cell.embeddings']])
-    rownames(x = embeddings) <- Cells(x = file)
-    colnames(x = embeddings) <- paste0(key, 1:ncol(x = embeddings))
+    if (is.null(cell_idx)) {
+      embeddings <- as.matrix(x = reduc.group[['cell.embeddings']])
+      rownames(x = embeddings) <- cell_names
+      colnames(x = embeddings) <- paste0(key, seq_len(ncol(x = embeddings)))
+    } else {
+      emb_ds   <- reduc.group[['cell.embeddings']]
+      emb_dims <- emb_ds$dims
+      embeddings <- emb_ds$read(args = list(cell_idx, seq_len(emb_dims[2L])))
+      rownames(x = embeddings) <- cell_names
+      colnames(x = embeddings) <- paste0(key, seq_len(emb_dims[2L]))
+    }
   } else {
     if (verbose) {
       warning(
@@ -239,10 +249,19 @@ AssembleDimReduc <- function(reduction, file, verbose = TRUE) {
 #'
 #' @rdname AssembleObject
 #'
-AssembleGraph <- function(graph, file, verbose = TRUE) {
+AssembleGraph <- function(graph, file, cell_idx = NULL, verbose = TRUE) {
   index <- file$index()
-  obj <- as.sparse(x = file[['graphs']][[graph]])
-  rownames(x = obj) <- colnames(x = obj) <- Cells(x = file)
+  cell_names <- if (is.null(cell_idx)) Cells(x = file) else Cells(x = file)[cell_idx]
+  if (is.null(cell_idx)) {
+    obj <- as.sparse(x = file[['graphs']][[graph]])
+    rownames(x = obj) <- colnames(x = obj) <- cell_names
+  } else {
+    # Read only the requested columns (source cells), then filter rows to the
+    # same set to produce the induced subgraph.
+    obj <- read_sparse_cols(grp = file[['graphs']][[graph]], col_idx = cell_idx)
+    obj <- obj[cell_idx, ]
+    rownames(x = obj) <- colnames(x = obj) <- cell_names
+  }
   obj <- as.Graph(x = obj)
   if (file[['graphs']][[graph]]$attr_exists(attr_name = 'assay.used')) {
     assay <- h5attr(x = file[['graphs']][[graph]], which = 'assay.used')
@@ -255,9 +274,10 @@ AssembleGraph <- function(graph, file, verbose = TRUE) {
 
 #' @rdname AssembleObject
 #'
-AssembleImage <- function(image, file, verbose = TRUE) {
+AssembleImage <- function(image, file, cell_idx = NULL, verbose = TRUE) {
   index <- file$index()
-  obj <- as.list(x = file[['images']][[image]], row.names = Cells(x = file))
+  cell_names <- if (is.null(cell_idx)) Cells(x = file) else Cells(x = file)[cell_idx]
+  obj <- as.list(x = file[['images']][[image]], row.names = cell_names)
   if (file[['images']][[image]]$attr_exists(attr_name = 'assay')) {
     assay <- h5attr(x = file[['images']][[image]], which = 'assay')
     if (image %in% index[[assay]]$images) {
@@ -271,13 +291,32 @@ AssembleImage <- function(image, file, verbose = TRUE) {
 #'
 #' @rdname AssembleObject
 #'
-AssembleNeighbor <- function(neighbor, file, verbose = TRUE) {
+AssembleNeighbor <- function(neighbor, file, cell_idx = NULL, verbose = TRUE) {
   neighbor.group <- file[['neighbors']][[neighbor]]
+  if (is.null(cell_idx)) {
+    nn.idx     <- as.matrix(x = neighbor.group[["nn.idx"]])
+    nn.dist    <- as.matrix(x = neighbor.group[["nn.dist"]])
+    cell.names <- as.matrix(x = neighbor.group[["cell.names"]])[, 1]
+  } else {
+    warning(
+      "Neighbor indices reference positions in the original full cell list ",
+      "and may point to cells not present in the subset; use with caution.",
+      call. = FALSE,
+      immediate. = TRUE
+    )
+    idx_ds  <- neighbor.group[["nn.idx"]]
+    dist_ds <- neighbor.group[["nn.dist"]]
+    knn     <- idx_ds$dims[2L]
+    nn.idx  <- idx_ds$read(args  = list(cell_idx, seq_len(knn)))
+    nn.dist <- dist_ds$read(args = list(cell_idx, seq_len(knn)))
+    # cell.names is small; read fully then subset
+    cell.names <- as.matrix(x = neighbor.group[["cell.names"]])[cell_idx, 1]
+  }
   obj <- new(
-    Class = 'Neighbor',
-    nn.idx =  as.matrix(x = neighbor.group[["nn.idx"]]),
-    nn.dist = as.matrix(x = neighbor.group[["nn.dist"]]),
-    cell.names =  as.matrix(x = neighbor.group[["cell.names"]])[,1]
+    Class      = 'Neighbor',
+    nn.idx     = nn.idx,
+    nn.dist    = nn.dist,
+    cell.names = cell.names
   )
   return(obj)
 }

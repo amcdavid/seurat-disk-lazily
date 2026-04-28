@@ -429,6 +429,112 @@ as.sparse.H5Group <- function(x, ...) {
   ))
 }
 
+#' Read specific columns from a CSC sparse matrix stored in an HDF5 group
+#'
+#' Performs HDF5-level column slicing on a group containing \code{data},
+#' \code{indices}, and \code{indptr} datasets (standard CSC layout).  Only
+#' the entries for the requested columns are read from disk; the full value
+#' and index arrays are never realised in memory.
+#'
+#' @param grp An \code{H5Group} with CSC datasets and a \code{dims}
+#'   (or \code{h5sparse_shape} / \code{shape}) attribute.
+#' @param col_idx Integer vector of 1-based column indices to extract.
+#'
+#' @return A \code{\link[Matrix]{dgCMatrix}} with \code{length(col_idx)}
+#'   columns.
+#'
+#' @importFrom Matrix sparseMatrix
+#'
+#' @keywords internal
+#'
+read_sparse_cols <- function(grp, col_idx) {
+  indptr_ds  <- grp[['indptr']]
+  indices_ds <- grp[['indices']]
+  data_ds    <- grp[['data']]
+
+  # Resolve matrix dimensions from whichever attribute is present
+  if (grp$attr_exists(attr_name = 'dims')) {
+    dims <- h5attr(x = grp, which = 'dims')
+  } else if (grp$attr_exists(attr_name = 'h5sparse_shape')) {
+    dims <- rev(h5attr(x = grp, which = 'h5sparse_shape'))
+  } else if (grp$attr_exists(attr_name = 'shape')) {
+    dims <- rev(h5attr(x = grp, which = 'shape'))
+  } else {
+    stop("Cannot determine matrix dimensions: no dims/shape attribute", call. = FALSE)
+  }
+  nrow_out   <- dims[1L]
+  ncol_out   <- length(col_idx)
+
+  # Read the full indptr array; it is small (ncols * 4 bytes) and needed for
+  # every column's byte-range calculation.
+  indptr <- indptr_ds$read()
+
+  # For column c (1-based R):
+  #   data start (1-based) = indptr[c]   + 1   (indptr is 0-based in file)
+  #   data end   (1-based) = indptr[c+1]        (0-based exclusive = 1-based inclusive)
+  starts <- indptr[col_idx]        + 1L   # 1-based start positions
+  ends   <- indptr[col_idx + 1L]          # 1-based end positions (inclusive)
+
+  row_idx_list <- vector('list', ncol_out)
+  val_list     <- vector('list', ncol_out)
+  new_indptr   <- integer(ncol_out + 1L)
+  new_indptr[1L] <- 0L
+
+  for (j in seq_len(ncol_out)) {
+    s <- starts[j]
+    e <- ends[j]
+    if (e >= s) {
+      rng <- s:e
+      row_idx_list[[j]] <- indices_ds$read(args = list(rng)) + 1L
+      val_list[[j]]     <- data_ds$read(args = list(rng))
+      new_indptr[j + 1L] <- new_indptr[j] + (e - s + 1L)
+    } else {
+      new_indptr[j + 1L] <- new_indptr[j]
+    }
+  }
+
+  all_row_idx <- unlist(row_idx_list, use.names = FALSE)
+  all_vals    <- unlist(val_list,     use.names = FALSE)
+
+  sparseMatrix(
+    i    = if (length(all_row_idx)) all_row_idx else integer(0L),
+    p    = new_indptr,
+    x    = if (length(all_vals))    all_vals    else numeric(0L),
+    dims = c(nrow_out, ncol_out)
+  )
+}
+
+#' Read a matrix slot from an HDF5 assay dataset, optionally subsetting columns
+#'
+#' Dispatches on the HDF5 object type:
+#' \itemize{
+#'   \item \code{H5Group} (CSC sparse) — calls \code{read_sparse_cols}
+#'   \item \code{H5D} (dense) — reads via HDF5 hyperslab
+#' }
+#' When \code{col_idx} is \code{NULL} the existing \code{as.matrix} path is
+#' used unchanged so the non-subsetting code path is unaffected.
+#'
+#' @param x An \code{H5Group} or \code{H5D} dataset representing a matrix
+#'   slot (rows = features, columns = cells).
+#' @param col_idx Integer vector of 1-based column (cell) indices, or
+#'   \code{NULL} to read all columns.
+#'
+#' @return A matrix (dense or sparse as appropriate).
+#'
+#' @keywords internal
+#'
+read_assay_matrix <- function(x, col_idx = NULL) {
+  if (is.null(col_idx)) {
+    return(as.matrix(x = x))
+  }
+  if (inherits(x, 'H5Group')) {
+    return(read_sparse_cols(grp = x, col_idx = col_idx))
+  }
+  # Dense H5D: use hyperslab to read only the requested columns
+  x_dims <- x$dims
+  return(as.matrix(x$read(args = list(seq_len(x_dims[1L]), col_idx))))
+}
+
 #' @return \code{dimnames}: returns a two-length list of character vectors for
 #' row and column names. Row names should be in a column named \code{index}
 #'

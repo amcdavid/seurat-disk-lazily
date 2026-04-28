@@ -207,7 +207,7 @@ GetImages <- function(images, index, assays = NULL) {
       return(index[[x]]$images)
     }
   )
-  assays.images <- unique(x = c(unlist(x = assays.images, index$global$images)))
+  assays.images <- unique(x = c(unlist(x = assays.images), index$global$images))
   return(intersect(x = images, y = assays.images))
 }
 

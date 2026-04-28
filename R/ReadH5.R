@@ -112,7 +112,12 @@ as.data.frame.H5Group <- function(x, row.names = NULL, optional = FALSE, ...) {
         x[[i]][]
       }
     } else if (inherits(x = x[[i]], what = 'H5Group')) {
-      df[[i]] <- as.factor(x = x[[i]])
+      # Call the internal helper directly: relying on as.factor() S4 dispatch
+      # here is fragile because as.factor is implicitly promoted to a generic
+      # and other packages on the search path (BiocGenerics / S4Vectors stack
+      # pulled in by SingleCellExperiment, scater, etc.) can shadow our
+      # generic, dropping the H5Group method and falling through to base.
+      df[[i]] <- h5group_to_factor(x = x[[i]])
     } else {
       stop("Unknown dataset type for ", i, call. = FALSE)
     }
@@ -141,29 +146,38 @@ as.data.frame.H5Group <- function(x, row.names = NULL, optional = FALSE, ...) {
 #' @rdname ReadH5
 #' @export
 #'
+#' Read an H5Group encoding a factor (datasets \code{levels} + \code{values})
+#' as an R \code{\link[base]{factor}}.
+#'
+#' Internal helper used in place of \code{as.factor(<H5Group>)} S4 dispatch,
+#' which is fragile across package load orders (see ReadH5.R).
+#'
+#' @keywords internal
+h5group_to_factor <- function(x) {
+  if (!x$exists(name = 'levels') || !x$exists(name = 'values')) {
+    stop("Missing required datasets 'levels' and 'values'", call. = FALSE)
+  }
+  if (!IsDType(x = x[['levels']], dtype = 'H5T_STRING') || length(x = x[['levels']]$dims) != 1) {
+    stop("'levels' must be a one-dimensional string dataset", call. = FALSE)
+  }
+  if (!IsDType(x = x[['values']], dtype = 'H5T_INTEGER') || length(x = x[['values']]$dims) != 1) {
+    stop("'values' must be a one-dimensional integer dataset", call. = FALSE)
+  }
+  if (!x[['levels']]$dims) {
+    return(factor())
+  }
+  values <- x[['values']][]
+  levels <- x[['levels']][]
+  if (length(x = unique(x = na.omit(object = values))) > length(x = levels)) {
+    stop("Too many values for levels provided", call. = FALSE)
+  }
+  factor(x = levels[values], levels = levels)
+}
+
 setMethod(
   f = 'as.factor',
   signature = c('x' = 'H5Group'),
-  definition = function(x) {
-    if (!x$exists(name = 'levels') || !x$exists(name = 'values')) {
-      stop("Missing required datasets 'levels' and 'values'", call. = FALSE)
-    }
-    if (!IsDType(x = x[['levels']], dtype = 'H5T_STRING') || length(x = x[['levels']]$dims) != 1) {
-      stop("'levels' must be a one-dimensional string dataset", call. = FALSE)
-    }
-    if (!IsDType(x = x[['values']], dtype = 'H5T_INTEGER') || length(x = x[['values']]$dims) != 1) {
-      stop("'values' must be a one-dimensional integer dataset", call. = FALSE)
-    }
-    if (!x[['levels']]$dims) {
-      return(factor())
-    }
-    values <- x[['values']][]
-    levels <- x[['levels']][]
-    if (length(x = unique(x = na.omit(object = values))) > length(x = levels)) {
-      stop("Too many values for levels provided", call. = FALSE)
-    }
-    return(factor(x = levels[values], levels = levels))
-  }
+  definition = function(x) h5group_to_factor(x = x)
 )
 
 #' @importFrom withr with_package
